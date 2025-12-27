@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>支付成功</title>
+  <style>
+    :root {
+      --success-color: #10b981;
+      --text-primary: #1a1f36;
+      --text-secondary: #697386;
+      --border-color: #e6e8eb;
+      --bg-gray: #f7f8f9;
+    }
+    
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    
+    .success-container {
+      max-width: 480px;
+      width: 100%;
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+      overflow: hidden;
+    }
+    
+    .success-header {
+      background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+      padding: 40px 32px;
+      text-align: center;
+      color: #fff;
+    }
+    
+    .success-icon {
+      width: 80px;
+      height: 80px;
+      background: rgba(255,255,255,0.2);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 20px;
+    }
+    
+    .success-icon svg {
+      width: 40px;
+      height: 40px;
+      stroke: #fff;
+      stroke-width: 3;
+    }
+    
+    .success-title {
+      font-size: 24px;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+    
+    .success-subtitle {
+      font-size: 14px;
+      opacity: 0.9;
+    }
+    
+    .amount-display {
+      padding: 32px;
+      text-align: center;
+      border-bottom: 1px solid var(--border-color);
+    }
+    
+    .amount-label {
+      font-size: 14px;
+      color: var(--text-secondary);
+      margin-bottom: 8px;
+    }
+    
+    .amount-value {
+      font-size: 42px;
+      font-weight: 700;
+      color: var(--text-primary);
+      letter-spacing: -1px;
+    }
+    
+    .amount-value .currency {
+      font-size: 24px;
+      font-weight: 500;
+      margin-right: 2px;
+    }
+
+    .amount-cny {
+      font-size: 14px;
+      color: var(--text-secondary);
+      margin-top: 4px;
+    }
+    
+    .order-info {
+      padding: 24px 32px;
+    }
+    
+    .info-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 14px 0;
+      border-bottom: 1px solid var(--border-color);
+    }
+    
+    .info-item:last-child {
+      border-bottom: none;
+    }
+    
+    .info-label {
+      font-size: 14px;
+      color: var(--text-secondary);
+    }
+    
+    .info-value {
+      font-size: 14px;
+      color: var(--text-primary);
+      font-weight: 500;
+      text-align: right;
+      max-width: 200px;
+      word-break: break-all;
+    }
+    
+    .actions {
+      padding: 0 32px 32px;
+      display: flex;
+      gap: 12px;
+    }
+    
+    .btn {
+      flex: 1;
+      height: 48px;
+      border-radius: 10px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s;
+    }
+    
+    .btn-primary {
+      background: var(--success-color);
+      color: #fff;
+      border: none;
+    }
+    
+    .btn-primary:hover {
+      background: #059669;
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(16, 185, 129, 0.35);
+    }
+    
+    .btn-secondary {
+      background: #fff;
+      color: var(--text-primary);
+      border: 2px solid var(--border-color);
+    }
+    
+    .btn-secondary:hover {
+      border-color: var(--success-color);
+      color: var(--success-color);
+    }
+    
+    .footer {
+      text-align: center;
+      padding: 16px 32px 24px;
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+    
+    /* 等待支付状态 */
+    .pending-header {
+      background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+    }
+    
+    .pending-icon {
+      animation: pulse 2s infinite;
+    }
+    
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.6; }
+    }
+    
+    /* 失败状态 */
+    .failed-header {
+      background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+    }
+    
+    /* 响应式 */
+    @media (max-width: 520px) {
+      body {
+        padding: 0;
+        background: #fff;
+      }
+      
+      .success-container {
+        border-radius: 0;
+        box-shadow: none;
+        min-height: 100vh;
+      }
+      
+      .amount-value {
+        font-size: 36px;
+      }
+      
+      .actions {
+        flex-direction: column;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="success-container">
+    <% if (order.status === 1) { %>
+      <!-- 支付成功 -->
+      <div class="success-header">
+        <div class="success-icon">
+          <svg viewBox="0 0 24 24" fill="none">
+            <polyline points="20 6 9 17 4 12"></polyline>
+          </svg>
+        </div>
+        <h1 class="success-title">支付成功</h1>
+        <p class="success-subtitle">感谢您的支付，交易已完成</p>
+      </div>
+    <% } else if (order.status === 0) { %>
+      <!-- 等待支付 -->
+      <div class="success-header pending-header">
+        <div class="success-icon pending-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"></circle>
+            <polyline points="12 6 12 12 16 14"></polyline>
+          </svg>
+        </div>
+        <h1 class="success-title">等待支付</h1>
+        <p class="success-subtitle">订单正在等待支付确认</p>
+      </div>
+    <% } else { %>
+      <!-- 订单关闭/失败 -->
+      <div class="success-header failed-header">
+        <div class="success-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="15" y1="9" x2="9" y2="15"></line>
+            <line x1="9" y1="9" x2="15" y2="15"></line>
+          </svg>
+        </div>
+        <h1 class="success-title">订单已关闭</h1>
+        <p class="success-subtitle">该订单已关闭或取消</p>
+      </div>
+    <% } %>
+    
+    <div class="amount-display">
+      <div class="amount-label">支付金额</div>
+      <% if (typeof isCrypto !== 'undefined' && isCrypto) { %>
+        <div class="amount-value">
+          <%= order.amount %> <%= order.currency %>
+        </div>
+        <div class="amount-cny">≈ ¥<%= order.amount_cny || order.money %></div>
+      <% } else { %>
+        <div class="amount-value">
+          <span class="currency">¥</span><%= parseFloat(order.money).toFixed(2) %>
+        </div>
+      <% } %>
+    </div>
+    
+    <div class="order-info">
+      <div class="info-item">
+        <span class="info-label">商品名称</span>
+        <span class="info-value"><%= order.name %></span>
+      </div>
+      <div class="info-item">
+        <span class="info-label">订单号</span>
+        <span class="info-value"><%= order.trade_no %></span>
+      </div>
+      <div class="info-item">
+        <span class="info-label">商户订单号</span>
+        <span class="info-value"><%= order.out_trade_no %></span>
+      </div>
+      <% if (typeof isCrypto !== 'undefined' && isCrypto && order.network) { %>
+        <div class="info-item">
+          <span class="info-label">支付网络</span>
+          <span class="info-value"><%= order.network %></span>
+        </div>
+      <% } %>
+      <% if (order.status === 1 && order.paid_at) { %>
+        <div class="info-item">
+          <span class="info-label">支付时间</span>
+          <span class="info-value"><%= new Date(order.paid_at).toLocaleString('zh-CN') %></span>
+        </div>
+      <% } %>
+      <div class="info-item">
+        <span class="info-label">创建时间</span>
+        <span class="info-value"><%= new Date(order.created_at).toLocaleString('zh-CN') %></span>
+      </div>
+    </div>
+    
+    <div class="actions">
+      <% if (order.return_url) { %>
+        <a href="<%= order.return_url %>" class="btn btn-primary">返回商户</a>
+      <% } %>
+      <% if (order.status === 0) { %>
+        <% if (typeof isCrypto !== 'undefined' && isCrypto) { %>
+          <a href="/api/crypto/pay/<%= order.trade_no %>" class="btn btn-secondary">继续支付</a>
+        <% } else { %>
+          <a href="/api/pay/cashier?trade_no=<%= order.trade_no %>" class="btn btn-secondary">继续支付</a>
+        <% } %>
+      <% } %>
+    </div>
+    
+    <div class="footer">
+      <p>如有疑问，请联系商户客服</p>
+    </div>
+  </div>
+
+  <% if (order.status === 0) { %>
+  <script>
+    // 等待支付状态，定时刷新检查
+    setTimeout(function() {
+      window.location.reload();
+    }, 5000);
+  </script>
+  <% } %>
+</body>
+</html>

@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>支付出错</title>
+  <style>
+    :root {
+      --error-color: #ef4444;
+      --text-primary: #1a1f36;
+      --text-secondary: #697386;
+      --border-color: #e6e8eb;
+    }
+    
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: #f7f8f9;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    
+    .error-container {
+      max-width: 440px;
+      width: 100%;
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 4px 24px rgba(0, 0, 0, 0.1);
+      padding: 48px 32px;
+      text-align: center;
+    }
+    
+    .error-icon {
+      width: 80px;
+      height: 80px;
+      background: #fef2f2;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 24px;
+    }
+    
+    .error-icon svg {
+      width: 40px;
+      height: 40px;
+      stroke: var(--error-color);
+      stroke-width: 2;
+    }
+    
+    .error-title {
+      font-size: 24px;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin-bottom: 12px;
+    }
+    
+    .error-message {
+      font-size: 15px;
+      color: var(--text-secondary);
+      line-height: 1.6;
+      margin-bottom: 32px;
+    }
+    
+    .error-code {
+      display: inline-block;
+      background: #fef2f2;
+      color: var(--error-color);
+      padding: 8px 16px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-family: monospace;
+      margin-bottom: 32px;
+    }
+    
+    .btn {
+      display: inline-block;
+      height: 48px;
+      padding: 0 32px;
+      border-radius: 10px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+      line-height: 48px;
+      transition: all 0.2s;
+    }
+    
+    .btn-back {
+      background: var(--text-primary);
+      color: #fff;
+      border: none;
+    }
+    
+    .btn-back:hover {
+      background: #2d3748;
+      transform: translateY(-1px);
+    }
+    
+    .help-text {
+      margin-top: 24px;
+      font-size: 13px;
+      color: var(--text-secondary);
+    }
+    
+    .help-text a {
+      color: #635bff;
+      text-decoration: none;
+    }
+    
+    .help-text a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+  <div class="error-container">
+    <div class="error-icon">
+      <svg viewBox="0 0 24 24" fill="none">
+        <circle cx="12" cy="12" r="10"></circle>
+        <line x1="12" y1="8" x2="12" y2="12"></line>
+        <line x1="12" y1="16" x2="12.01" y2="16"></line>
+      </svg>
+    </div>
+    
+    <h1 class="error-title">支付出错</h1>
+    <p class="error-message"><%= message || '支付过程中发生错误，请稍后重试' %></p>
+    
+    <% if (code) { %>
+      <div class="error-code">错误代码: <%= code %></div>
+    <% } %>
+    
+    <% if (backUrl) { %>
+      <a href="<%= backUrl %>" class="btn btn-back">返回重试</a>
+    <% } else { %>
+      <a href="javascript:history.back()" class="btn btn-back">返回上一页</a>
+    <% } %>
+    
+    <p class="help-text">
+      如果问题持续出现，请联系客服获取帮助
+    </p>
+  </div>
+</body>
+</html>

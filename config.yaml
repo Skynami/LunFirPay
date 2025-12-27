@@ -1,0 +1,42 @@
+# LUNA平台配置文件
+# ================================
+
+# 数据库配置（MySQL）
+database:
+  host: "127.0.0.1"              # 数据库主机
+  port: 3306                         # 数据库端口
+  user: "123"                    # 数据库用户名
+  password: "258"             # 数据库密码
+  database: "123"                # 数据库名称
+  timezone: "+08:00"                 # 时区（东八区）
+
+# 商户回调代理配置（反向代理模式）
+# 回调URL格式：callbackProxy + 原始notify_url
+# 例如：https://proxy.example.com/https://merchant.com/notify
+# 代理服务器会反向代理访问原始URL，返回原始请求信息
+# 留空则直接请求商户回调URL
+callbackProxy: ""
+
+# Cloudflare Turnstile 人机验证
+# 如果 enabled 为 false，将关闭人机验证（注册/登录/找回密码不需要验证）
+turnstile:
+  enabled: false                     # 是否启用人机验证
+  siteKey: "11"       # 前端站点密钥
+  secretKey: "11"  # 后端密钥
+
+# Telegram 机器人配置
+telegram:
+  botToken: ""                       # Bot Token（从 @BotFather 获取）
+  botName: "epay_notify_bot"         # Bot 用户名
+  # 管理员通知会自动发送给 is_admin=1 的用户（需绑定 Telegram）
+
+# 邮件服务配置（SMTP）
+# 如果 enabled 为 false 或配置不完整，将关闭邮件功能（注册/重置密码不强制验证码）
+email:
+  enabled: false                     # 是否启用邮件功能
+  host: "smtp.example.com"           # SMTP 服务器地址
+  port: 465                          # SMTP 端口（通常 465=SSL, 587=TLS, 25=无加密）
+  secure: true                       # 是否使用 SSL（端口465时通常为true）
+  user: ""                           # SMTP 用户名（发件邮箱）
+  pass: ""                           # SMTP 密码或授权码
+  from: ""                           # 发件人显示名称和地址，如: "LunaFir <noreply@example.com>"

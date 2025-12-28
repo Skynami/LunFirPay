@@ -239,6 +239,7 @@ async function handleBind(chatId, token, fromUser) {
     const { user_id, user_type } = tokenInfo[0];
     const telegramId = fromUser.id.toString();
     const username = fromUser.username || '';
+    const nickname = [fromUser.first_name, fromUser.last_name].filter(Boolean).join(' ') || '';
     
     // 删除或更新旧绑定
     await db.query(
@@ -249,10 +250,10 @@ async function handleBind(chatId, token, fromUser) {
     // 创建新绑定
     await db.query(
       `INSERT INTO telegram_bindings 
-       (user_id, user_type, telegram_id, username, chat_id, enabled, 
+       (user_id, user_type, telegram_id, username, nickname, chat_id, enabled, 
         notify_payment, notify_balance, notify_settlement)
-       VALUES (?, ?, ?, ?, ?, 1, 1, 1, 1)`,
-      [user_id, user_type, telegramId, username, chatId]
+       VALUES (?, ?, ?, ?, ?, ?, 1, 1, 1, 1)`,
+      [user_id, user_type, telegramId, username, nickname, chatId]
     );
     
     // 删除已使用的 token
@@ -870,13 +871,14 @@ async function notifyMerchantRAM(merchantId, notifyType, message, pid = null) {
       } else {
         switch (notifyType) {
           case 'payment':
-            hasPermission = ram.notify_payment === 1 && (permissions.includes('orders') || permissions.includes('view') || permissions.includes('order'));
+            // 商户RAM权限: admin, order, finance
+            hasPermission = ram.notify_payment === 1 && permissions.includes('order');
             break;
           case 'balance':
-            hasPermission = ram.notify_balance === 1 && (permissions.includes('finance') || permissions.includes('view') || permissions.includes('balance'));
+            hasPermission = ram.notify_balance === 1 && permissions.includes('finance');
             break;
           case 'settlement':
-            hasPermission = ram.notify_settlement === 1 && (permissions.includes('finance') || permissions.includes('settlement'));
+            hasPermission = ram.notify_settlement === 1 && permissions.includes('finance');
             break;
         }
       }
@@ -1067,10 +1069,12 @@ async function unbind(userId, userType) {
 
 async function notifyAdmins(message, options = {}) {
   try {
+    // 查询所有已绑定的管理员
+    // telegram_bindings.user_id 存储的是 users.id 的字符串形式
     const [admins] = await db.query(`
       SELECT tb.chat_id FROM telegram_bindings tb
-      JOIN users u ON tb.user_id = u.id
-      WHERE u.is_admin = 1 AND tb.enabled = 1
+      INNER JOIN users u ON CAST(tb.user_id AS UNSIGNED) = u.id
+      WHERE tb.user_type = 'admin' AND u.is_admin = 1 AND tb.enabled = 1
     `);
     
     if (admins.length === 0) {

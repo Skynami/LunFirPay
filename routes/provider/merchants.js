@@ -213,10 +213,10 @@ router.post('/merchants/create-user', requireProviderRamPermission('merchant'), 
     );
     const userId = insertResult.insertId;
 
-    // 创建商户记录（user_id 引用 users.id）
+    // 创建商户记录（user_id 引用 users.id），管理员创建的商户直接激活
     await db.query(
-      'INSERT INTO merchants (user_id, api_key) VALUES (?, NULL)',
-      [userId]
+      'INSERT INTO merchants (user_id, api_key, status) VALUES (?, NULL, ?)',
+      [userId, 'active']
     );
 
     res.json({ code: 0, msg: '创建成功', data: { userId, username, password, email } });

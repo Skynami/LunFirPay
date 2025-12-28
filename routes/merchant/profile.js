@@ -7,7 +7,7 @@ const db = require('../../config/database');
 const crypto = require('crypto');
 const telegramService = require('../../Telegram');
 
-const { requireMerchantMainAccount } = require('../auth');
+const { requireMerchantMainAccount, requireMerchantRamPermission } = require('../auth');
 
 const isEnabledStatus = (status) => status === 'active' || status === 'approved';
 
@@ -149,7 +149,7 @@ router.get('/telegram/status', async (req, res) => {
 });
 
 // 生成 Telegram 绑定码
-router.post('/telegram/bindToken', async (req, res) => {
+router.post('/telegram/bindToken', requireMerchantRamPermission('settings'), async (req, res) => {
   try {
     const userId = req.ramUser ? req.ramUser.user_id : req.user.user_id;
     const userType = req.ramUser ? 'ram' : 'merchant';
@@ -192,7 +192,7 @@ router.post('/telegram/bindToken', async (req, res) => {
 });
 
 // 解除 Telegram 绑定
-router.post('/telegram/unbind', async (req, res) => {
+router.post('/telegram/unbind', requireMerchantRamPermission('settings'), async (req, res) => {
   try {
     const userId = req.ramUser ? req.ramUser.user_id : req.user.user_id;
     const userType = req.ramUser ? 'ram' : 'merchant';
@@ -246,7 +246,7 @@ router.post('/reset-api-key', requireMerchantMainAccount, async (req, res) => {
 });
 
 // 设置手续费承担方 - 单服务商模式
-router.post('/fee-bearer', async (req, res) => {
+router.post('/fee-bearer', requireMerchantRamPermission('settings'), async (req, res) => {
   try {
     const { user_id } = req.user;
     const { feeBearer } = req.body;

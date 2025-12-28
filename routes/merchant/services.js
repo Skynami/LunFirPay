@@ -292,7 +292,7 @@ router.get('/provider/v2-keys', async (req, res) => {
 });
 
 // 重置PID的V2接口密钥（重新生成RSA密钥对）- 单服务商模式
-router.post('/provider/v2-keys/reset', async (req, res) => {
+router.post('/provider/v2-keys/reset', requireMerchantMainAccount, async (req, res) => {
   try {
     const { user_id } = req.user;
 

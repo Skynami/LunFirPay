@@ -72,7 +72,7 @@ router.get('/orders', requireMerchantRamPermission('order'), async (req, res) =>
 });
 
 // 申请退款（直接调用支付插件进行原路退款）
-router.post('/refund', async (req, res) => {
+router.post('/refund', requireMerchantRamPermission('finance'), async (req, res) => {
   try {
     const { user_id } = req.user;
     const { tradeNo, money, reason } = req.body;

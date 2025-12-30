@@ -188,6 +188,20 @@ function buildRequestParams(config, params) {
 }
 
 /**
+ * 检查是否配置了有效的微信公众号绑定
+ */
+function hasWxmp(channelConfig) {
+    return channelConfig.wxmp && channelConfig.wxmp.appid && channelConfig.wxmp.appsecret;
+}
+
+/**
+ * 检查是否配置了有效的微信小程序绑定
+ */
+function hasWxa(channelConfig) {
+    return channelConfig.wxa && channelConfig.wxa.appid && channelConfig.wxa.appsecret;
+}
+
+/**
  * 发起支付
  */
 async function submit(channelConfig, orderInfo, conf) {
@@ -195,19 +209,36 @@ async function submit(channelConfig, orderInfo, conf) {
     const apptype = channelConfig.apptype || [];
     
     if (is_wechat) {
-        if (apptype.includes('2')) {
+        // 微信浏览器内
+        if (apptype.includes('2') && hasWxmp(channelConfig)) {
+            // 配置了公众号，可以使用 JSAPI
             return { type: 'jump', url: `/pay/jspay/${trade_no}/?d=1` };
+        } else if (apptype.includes('2') && hasWxa(channelConfig)) {
+            // 配置了小程序，跳转到 wap 页面（小程序跳转）
+            return { type: 'jump', url: `/pay/wap/${trade_no}/` };
+        } else if (apptype.includes('1')) {
+            // 只支持 Native 扫码
+            return { type: 'jump', url: `/pay/qrcode/${trade_no}/` };
         }
-        return { type: 'jump', url: `/pay/qrcode/${trade_no}/` };
+        // 无法在微信内支付，显示提交页面
+        return { type: 'jump', url: `/pay/submit/${trade_no}/` };
     } else if (is_mobile) {
+        // 手机浏览器
         if (apptype.includes('3')) {
+            // H5 支付
             return { type: 'jump', url: `/pay/h5/${trade_no}/` };
         } else if (apptype.includes('5')) {
+            // APP 支付
             return { type: 'jump', url: `/pay/apppay/${trade_no}/` };
+        } else if (apptype.includes('2') && (hasWxmp(channelConfig) || hasWxa(channelConfig))) {
+            // 有绑定公众号或小程序，跳转到 wap 页面
+            return { type: 'jump', url: `/pay/wap/${trade_no}/` };
         }
+        // 默认扫码
         return { type: 'jump', url: `/pay/qrcode/${trade_no}/` };
     }
     
+    // PC端，默认扫码
     return { type: 'jump', url: `/pay/qrcode/${trade_no}/` };
 }
 
@@ -217,6 +248,7 @@ async function submit(channelConfig, orderInfo, conf) {
 async function mapi(channelConfig, orderInfo, conf) {
     const { method, device, mdevice, trade_no } = orderInfo;
     const apptype = channelConfig.apptype || [];
+    const siteurl = conf.siteurl || '';
     
     if (method === 'app') {
         return await apppay(channelConfig, orderInfo, conf);
@@ -225,15 +257,23 @@ async function mapi(channelConfig, orderInfo, conf) {
     } else if (method === 'scan') {
         return await scanpay(channelConfig, orderInfo, conf);
     } else if (mdevice === 'wechat') {
-        if (apptype.includes('2')) {
-            return { type: 'jump', url: `/pay/jspay/${trade_no}/?d=1` };
+        // 微信客户端内
+        if (apptype.includes('2') && hasWxmp(channelConfig)) {
+            // 有公众号绑定，使用 JSAPI
+            return { type: 'jump', url: `${siteurl}pay/jspay/${trade_no}/?d=1` };
+        } else if (apptype.includes('2') && hasWxa(channelConfig)) {
+            // 有小程序绑定，跳转 wap
+            return await wap(channelConfig, orderInfo, conf);
         }
-        return { type: 'jump', url: `/pay/submit/${trade_no}/` };
+        return { type: 'jump', url: `${siteurl}pay/submit/${trade_no}/` };
     } else if (device === 'mobile') {
+        // 手机浏览器
         if (apptype.includes('3')) {
             return await h5pay(channelConfig, orderInfo, conf);
-        } else if (apptype.includes('2')) {
-            return { type: 'jump', url: `/pay/wap/${trade_no}/` };
+        } else if (apptype.includes('5')) {
+            return { type: 'jump', url: `${siteurl}pay/submit/${trade_no}/` };
+        } else if (apptype.includes('2') && (hasWxmp(channelConfig) || hasWxa(channelConfig))) {
+            return await wap(channelConfig, orderInfo, conf);
         }
         return await qrcode(channelConfig, orderInfo, conf);
     } else {
@@ -249,8 +289,13 @@ async function qrcode(channelConfig, orderInfo, conf) {
     const apptype = channelConfig.apptype || [];
     const siteurl = conf.siteurl || '';
     
-    if (!apptype.includes('1') && apptype.includes('2')) {
-        return { type: 'qrcode', page: 'wxpay_qrcode', url: `${siteurl}pay/jspay/${trade_no}/` };
+    // 如果没有开启 Native 但开启了 JSAPI 且有公众号/小程序绑定
+    if (!apptype.includes('1') && apptype.includes('2') && hasWxmp(channelConfig)) {
+        return { type: 'qrcode', url: `${siteurl}pay/jspay/${trade_no}/` };
+    } else if (!apptype.includes('1') && apptype.includes('2') && hasWxa(channelConfig)) {
+        return { type: 'qrcode', url: `${siteurl}pay/wap/${trade_no}/` };
+    } else if (!apptype.includes('1')) {
+        throw new Error('当前支付通道没有开启的支付方式');
     }
     
     const params = buildRequestParams(channelConfig, {
@@ -279,7 +324,26 @@ async function qrcode(channelConfig, orderInfo, conf) {
         return { type: 'jump', url: code_url };
     }
     
-    return { type: 'qrcode', page: 'wxpay_qrcode', url: code_url };
+    return { type: 'qrcode', url: code_url };
+}
+
+/**
+ * 手机支付（显示微信扫码或小程序跳转）
+ */
+async function wap(channelConfig, orderInfo, conf) {
+    const { trade_no } = orderInfo;
+    const siteurl = conf.siteurl || '';
+    
+    if (hasWxa(channelConfig)) {
+        // 有小程序绑定，生成小程序跳转链接
+        // TODO: 实现小程序 URL Scheme 生成
+        const code_url = `${siteurl}pay/jspay/${trade_no}/`;
+        return { type: 'qrcode', url: code_url };
+    } else {
+        // 只有公众号，显示 JSAPI 扫码
+        const code_url = `${siteurl}pay/jspay/${trade_no}/`;
+        return { type: 'qrcode', url: code_url };
+    }
 }
 
 /**
@@ -336,15 +400,25 @@ async function jspay(channelConfig, orderInfo, conf) {
         return { type: 'error', msg: '需要获取用户openid' };
     }
     
-    const params = buildRequestParams(channelConfig, {
+    // 对于服务商模式，如果配置了绑定的公众号，需要使用 sub_openid 和 sub_appid
+    const requestParams = {
         body: name,
         out_trade_no: trade_no,
         total_fee: Math.round(money * 100).toString(),
         spbill_create_ip: clientip || '127.0.0.1',
         notify_url: notify_url,
-        trade_type: 'JSAPI',
-        openid: openid
-    });
+        trade_type: 'JSAPI'
+    };
+    
+    // 如果绑定了公众号，使用 sub_appid 和 sub_openid
+    if (hasWxmp(channelConfig)) {
+        requestParams.sub_appid = channelConfig.wxmp.appid;
+        requestParams.sub_openid = openid;
+    } else {
+        requestParams.openid = openid;
+    }
+    
+    const params = buildRequestParams(channelConfig, requestParams);
     
     const result = await sendRequest('/pay/unifiedorder', params, channelConfig);
     
@@ -360,8 +434,11 @@ async function jspay(channelConfig, orderInfo, conf) {
     const timestamp = Math.floor(Date.now() / 1000).toString();
     const nonceStr = generateNonceStr();
     
+    // 使用绑定的公众号 appid（如果有），否则使用返回的 appid
+    const jsAppId = hasWxmp(channelConfig) ? channelConfig.wxmp.appid : result.appid;
+    
     const jsapiParams = {
-        appId: result.appid,
+        appId: jsAppId,
         timeStamp: timestamp,
         nonceStr: nonceStr,
         package: `prepay_id=${result.prepay_id}`,
@@ -370,14 +447,11 @@ async function jspay(channelConfig, orderInfo, conf) {
     
     jsapiParams.paySign = generateSign(jsapiParams, channelConfig.appkey);
     
-    if (method === 'jsapi') {
-        return { type: 'jsapi', data: jsapiParams };
-    }
-    
-    return {
-        type: 'page',
-        page: 'wxpay_jspay',
-        data: { jsapi_params: jsapiParams, redirect_url: `/pay/ok/${trade_no}/` }
+    // 统一返回 jsapi 类型，由前端/路由处理显示
+    return { 
+        type: 'jsapi', 
+        data: jsapiParams,
+        redirect_url: `/pay/ok/${trade_no}/`
     };
 }
 
@@ -565,6 +639,7 @@ module.exports = {
     submit,
     mapi,
     qrcode,
+    wap,
     h5pay,
     jspay,
     apppay,

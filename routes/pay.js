@@ -1613,7 +1613,11 @@ router.post('/dopay', async (req, res) => {
         // 证书配置
         config: {
           certs: channelConfigJson.certs || {}
-        }
+        },
+        // 绑定的微信公众号配置 (用于 JSAPI 支付获取 openid)
+        wxmp: channelConfigJson.wxmp || null,
+        // 绑定的微信小程序配置 (用于小程序跳转支付)
+        wxa: channelConfigJson.wxa || null
       };
     } catch (e) {
       console.error('解析通道配置失败:', e);
@@ -2586,6 +2590,257 @@ router.all('/api.php', async (req, res) => {
     return handleQuery(req, res);
   }
   res.json({ code: -1, msg: '未知操作' });
+});
+
+// ==================== 动态支付路由处理 ====================
+// 处理 /pay/jspay/:trade_no, /pay/h5/:trade_no, /pay/qrcode/:trade_no 等
+router.all('/:func/:trade_no', async (req, res) => {
+  try {
+    const { func, trade_no } = req.params;
+    
+    // 验证函数名，只允许特定的支付方法
+    const allowedFuncs = ['jspay', 'h5', 'qrcode', 'wap', 'apppay', 'submit', 'ok'];
+    if (!allowedFuncs.includes(func)) {
+      return res.status(404).send('Not Found');
+    }
+
+    // 查询订单
+    const [orders] = await db.query(
+      'SELECT * FROM orders WHERE trade_no = ?',
+      [trade_no]
+    );
+
+    if (orders.length === 0) {
+      return res.status(404).render('error', { 
+        message: '该订单号不存在，请返回来源地重新发起请求'
+      });
+    }
+
+    const order = orders[0];
+
+    // 获取通道配置
+    const [channels] = await db.query(
+      'SELECT * FROM provider_channels WHERE id = ?',
+      [order.channel_id]
+    );
+
+    if (channels.length === 0) {
+      return res.status(500).render('error', {
+        message: '当前支付通道信息不存在'
+      });
+    }
+
+    const channelConfig = channels[0];
+    const pluginName = channelConfig.plugin_name;
+
+    // 获取插件
+    const plugin = pluginLoader.getPlugin(pluginName);
+    if (!plugin) {
+      return res.status(500).render('error', {
+        message: '支付插件不存在'
+      });
+    }
+
+    // 检查插件是否支持该方法
+    if (typeof plugin[func] !== 'function') {
+      // 如果不支持，跳转到通用提交页面
+      if (func === 'ok') {
+        return res.render('success', { order, trade_no });
+      }
+      return res.redirect(`/api/pay/cashier?trade_no=${trade_no}`);
+    }
+
+    // 解析通道配置
+    let pluginConfig = {};
+    let channelConfigJson = {};
+    try {
+      channelConfigJson = typeof channelConfig.config === 'string' 
+        ? JSON.parse(channelConfig.config) 
+        : (channelConfig.config || {});
+      
+      pluginConfig = {
+        id: channelConfig.id,
+        name: channelConfig.channel_name,
+        plugin: channelConfig.plugin_name,
+        ...channelConfigJson.params,
+        apptype: channelConfigJson.apptype || [],
+        config: { certs: channelConfigJson.certs || {} },
+        wxmp: channelConfigJson.wxmp || null,
+        wxa: channelConfigJson.wxa || null
+      };
+    } catch (e) {
+      console.error('解析通道配置失败:', e);
+    }
+
+    // 获取基础URL和系统配置
+    const baseUrl = await systemConfig.getApiEndpoint();
+    const sitename = await systemConfig.getConfig('sitename', '');
+    
+    // 对于 jspay，需要获取用户 openid
+    let openid = req.query.openid || req.session?.openid || null;
+    
+    if (func === 'jspay' && !openid && pluginConfig.wxmp && pluginConfig.wxmp.appid) {
+      // 检查是否有微信回调的 code
+      const code = req.query.code;
+      if (code) {
+        // 用 code 换取 openid
+        try {
+          const axios = require('axios');
+          const tokenUrl = `https://api.weixin.qq.com/sns/oauth2/access_token?appid=${pluginConfig.wxmp.appid}&secret=${pluginConfig.wxmp.appsecret}&code=${code}&grant_type=authorization_code`;
+          const tokenRes = await axios.get(tokenUrl);
+          if (tokenRes.data.openid) {
+            openid = tokenRes.data.openid;
+            // 保存到 session
+            if (req.session) {
+              req.session.openid = openid;
+            }
+          } else {
+            console.error('获取 openid 失败:', tokenRes.data);
+          }
+        } catch (e) {
+          console.error('微信授权获取 openid 失败:', e.message);
+        }
+      }
+      
+      // 如果仍然没有 openid，重定向到微信授权
+      if (!openid) {
+        const redirectUri = encodeURIComponent(`${baseUrl}pay/jspay/${trade_no}/`);
+        const authUrl = `https://open.weixin.qq.com/connect/oauth2/authorize?appid=${pluginConfig.wxmp.appid}&redirect_uri=${redirectUri}&response_type=code&scope=snsapi_base&state=pay#wechat_redirect`;
+        return res.redirect(authUrl);
+      }
+    }
+    
+    // 构建订单信息
+    const realMoney = order.real_money || order.money;
+    const orderInfo = {
+      trade_no: order.trade_no,
+      out_trade_no: order.out_trade_no,
+      money: realMoney,
+      name: order.name,
+      notify_url: `${baseUrl}pay/notify/${order.trade_no}/`,
+      return_url: order.return_url || '',
+      clientip: req.ip || req.headers['x-real-ip'] || '127.0.0.1',
+      openid: openid,
+      method: func
+    };
+
+    const conf = {
+      siteurl: baseUrl,
+      sitename: sitename,
+      localurl: baseUrl
+    };
+
+    // 调用插件方法
+    const result = await plugin[func](pluginConfig, orderInfo, conf);
+    
+    console.log(`插件 ${func} 返回:`, result);
+
+    // 处理返回结果
+    if (result.type === 'error') {
+      return res.render('error', {
+        message: result.msg || '支付失败'
+      });
+    }
+
+    if (result.type === 'jump') {
+      return res.redirect(result.url);
+    }
+
+    if (result.type === 'page') {
+      // 渲染插件指定的页面
+      return res.render(result.page, {
+        ...result.data,
+        order,
+        trade_no
+      });
+    }
+
+    if (result.type === 'qrcode') {
+      // 使用通用的 qrcode.ejs 模板
+      return res.render('qrcode', {
+        qrcodeUrl: result.url,
+        order,
+        trade_no
+      });
+    }
+
+    if (result.type === 'jsapi') {
+      // JSAPI 支付 - 直接返回内联 HTML 页面
+      const jsapiHtml = `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>微信支付</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #f5f5f5; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+    .container { background: #fff; border-radius: 16px; box-shadow: 0 4px 24px rgba(0,0,0,0.1); padding: 40px; max-width: 400px; width: 100%; text-align: center; }
+    .logo { width: 80px; height: 80px; background: #07c160; border-radius: 50%; margin: 0 auto 24px; display: flex; align-items: center; justify-content: center; }
+    .logo svg { width: 48px; height: 48px; fill: #fff; }
+    .title { font-size: 18px; color: #333; margin-bottom: 8px; }
+    .amount { font-size: 36px; font-weight: 700; color: #07c160; margin-bottom: 24px; }
+    .amount::before { content: '¥'; font-size: 24px; }
+    .btn { display: block; width: 100%; padding: 16px; background: #07c160; color: #fff; border: none; border-radius: 8px; font-size: 16px; font-weight: 600; cursor: pointer; }
+    .btn:disabled { background: #ccc; }
+    .status { margin-top: 16px; font-size: 14px; color: #666; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="logo"><svg viewBox="0 0 24 24"><path d="M8.5 5c-2.5 0-4.5 1.7-4.5 3.8 0 1.2.7 2.3 1.8 3l-.5 1.5 1.8-1c.4.1.9.2 1.4.2.2 0 .4 0 .6 0-.1-.4-.2-.8-.2-1.2C8.9 9.3 10.9 7.5 13.5 7.5c.3 0 .5 0 .8.1C13.6 5.9 11.3 5 8.5 5zM6 7.5c-.4 0-.8.3-.8.8s.3.8.8.8.8-.3.8-.8-.4-.8-.8-.8zm5 0c-.4 0-.8.3-.8.8s.3.8.8.8.8-.3.8-.8-.4-.8-.8-.8zm2.5 1.5c-2.2 0-4 1.5-4 3.3 0 1.8 1.8 3.3 4 3.3.4 0 .8-.1 1.2-.2l1.4.8-.4-1.3c.9-.6 1.5-1.5 1.5-2.5 0-1.9-1.8-3.4-3.7-3.4zm-1.3 2c.3 0 .6.3.6.6s-.3.6-.6.6-.6-.3-.6-.6.3-.6.6-.6zm2.6 0c.3 0 .6.3.6.6s-.3.6-.6.6-.6-.3-.6-.6.3-.6.6-.6z"/></svg></div>
+    <h1 class="title">${order.name}</h1>
+    <div class="amount">${parseFloat(realMoney).toFixed(2)}</div>
+    <button id="payBtn" class="btn">立即支付</button>
+    <p id="status" class="status"></p>
+  </div>
+  <script>
+    var jsApiParams = ${JSON.stringify(result.data)};
+    var redirectUrl = '${result.redirect_url || `/pay/ok/${trade_no}/`}';
+    document.getElementById('payBtn').addEventListener('click', function() {
+      var btn = this, status = document.getElementById('status');
+      if (typeof WeixinJSBridge === 'undefined') { status.textContent = '请在微信中打开此页面'; return; }
+      btn.disabled = true; btn.textContent = '支付中...';
+      WeixinJSBridge.invoke('getBrandWCPayRequest', jsApiParams, function(res) {
+        if (res.err_msg === 'get_brand_wcpay_request:ok') {
+          status.textContent = '支付成功，正在跳转...'; status.style.color = '#07c160';
+          setTimeout(function() { window.location.href = redirectUrl; }, 1500);
+        } else if (res.err_msg === 'get_brand_wcpay_request:cancel') {
+          btn.disabled = false; btn.textContent = '立即支付'; status.textContent = '支付已取消';
+        } else {
+          btn.disabled = false; btn.textContent = '立即支付'; status.textContent = '支付失败';
+        }
+      });
+    });
+    if (typeof WeixinJSBridge !== 'undefined') { document.getElementById('payBtn').click(); }
+  </script>
+</body>
+</html>`;
+      return res.send(jsapiHtml);
+    }
+
+    if (result.type === 'scheme') {
+      // 小程序跳转 - 使用 qrcode 模板显示
+      return res.render('qrcode', {
+        qrcodeUrl: result.url,
+        order,
+        trade_no
+      });
+    }
+
+    // 默认跳转
+    if (result.url) {
+      return res.redirect(result.url);
+    }
+
+    return res.redirect(`/api/pay/cashier?trade_no=${trade_no}`);
+
+  } catch (error) {
+    console.error('动态支付路由错误:', error);
+    return res.status(500).render('error', {
+      message: error.message || '系统错误，请稍后重试'
+    });
+  }
 });
 
 module.exports = router;

@@ -134,11 +134,11 @@
     <h1 class="error-title">支付出错</h1>
     <p class="error-message"><%= message || '支付过程中发生错误，请稍后重试' %></p>
     
-    <% if (code) { %>
+    <% if (typeof code !== 'undefined' && code) { %>
       <div class="error-code">错误代码: <%= code %></div>
     <% } %>
     
-    <% if (backUrl) { %>
+    <% if (typeof backUrl !== 'undefined' && backUrl) { %>
       <a href="<%= backUrl %>" class="btn btn-back">返回重试</a>
     <% } else { %>
       <a href="javascript:history.back()" class="btn btn-back">返回上一页</a>

@@ -1627,7 +1627,7 @@ router.post('/dopay', async (req, res) => {
     const baseUrl = await systemConfig.getApiEndpoint();
     
     // 获取实际支付金额（已锁定订单使用数据库中的值）
-    const realMoney = order.real_money || order.money;
+    const realMoney = parseFloat(order.real_money || order.money) || 0;
     
     // 获取订单名称模板配置，支持自定义商品名称
     const orderNameTemplate = await systemConfig.getConfig('order_name_template', '');
@@ -2837,7 +2837,7 @@ router.all('/:func/:trade_no', async (req, res) => {
     }
     
     // 构建订单信息
-    const realMoney = order.real_money || order.money;
+    const realMoney = parseFloat(order.real_money || order.money) || 0;
     const orderInfo = {
       trade_no: order.trade_no,
       out_trade_no: order.out_trade_no,
@@ -2864,7 +2864,9 @@ router.all('/:func/:trade_no', async (req, res) => {
     // 处理返回结果
     if (result.type === 'error') {
       return res.render('error', {
-        message: result.msg || '支付失败'
+        message: result.msg || '支付失败',
+        code: result.code || null,
+        backUrl: orderInfo.return_url || null
       });
     }
 

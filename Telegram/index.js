@@ -82,7 +82,8 @@ async function start() {
     
     // 设置命令菜单
     await bot.setMyCommands([
-      { command: 'start', description: '开始使用 / 绑定账号' },
+      { command: 'start', description: '开始使用' },
+      { command: 'bind', description: '绑定账号（输入绑定码）' },
       { command: 'help', description: '查看帮助' },
       { command: 'status', description: '查看绑定状态' },
       { command: 'balance', description: '查询账户余额' },
@@ -132,6 +133,28 @@ function setupCommandHandlers() {
       await handleBind(chatId, token, msg.from);
     } else {
       await handleStart(chatId, msg.from);
+    }
+  });
+  
+  // /bind 命令 - 手动输入绑定码
+  bot.onText(/\/bind(?:\s+(.+))?/, async (msg, match) => {
+    const chatId = msg.chat.id;
+    const token = match[1]?.trim();
+    
+    if (token) {
+      await handleBind(chatId, token, msg.from);
+    } else {
+      await bot.sendMessage(chatId, `
+ℹ️ *绑定说明*
+
+请在平台获取绑定码后，使用以下格式绑定：
+
+\`/bind 您的绑定码\`
+
+例如：\`/bind abc123def456\`
+
+💡 绑定码可在平台「个人设置」中点击「绑定 Telegram」获取
+`.trim(), { parse_mode: 'Markdown' });
     }
   });
   
@@ -1174,16 +1197,27 @@ router.post('/bindToken', authMiddleware, async (req, res) => {
   try {
     const { user_id, user_type } = req.user;
     
-    await db.query('DELETE FROM telegram_bind_tokens WHERE user_type = ? AND user_id = ?', [user_type, user_id]);
+    await db.query('DELETE FROM telegram_bind_tokens WHERE user_type = ? AND user_id = ?', [user_type, String(user_id)]);
     
     const token = crypto.randomBytes(16).toString('hex');
-    const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10分钟有效期
     
-    await db.query('INSERT INTO telegram_bind_tokens (token, user_type, user_id, expires_at) VALUES (?, ?, ?, ?)', [token, user_type, user_id, expiresAt]);
+    await db.query('INSERT INTO telegram_bind_tokens (token, user_type, user_id, expires_at) VALUES (?, ?, ?, ?)', [token, user_type, String(user_id), expiresAt]);
     
     const bindUrl = `https://t.me/${config.botName}?start=${token}`;
+    const bindCommand = `/bind ${token}`;
     
-    res.json({ code: 0, data: { token, bindUrl, expiresAt: expiresAt.toISOString() } });
+    res.json({ 
+      code: 0, 
+      data: { 
+        token,           // 绑定码
+        bindUrl,         // 直接点击链接绑定
+        bindCommand,     // 手动输入命令绑定
+        botName: config.botName,
+        expiresAt: expiresAt.toISOString(),
+        expiresIn: 600   // 有效期（秒）
+      } 
+    });
   } catch (err) {
     console.error('生成绑定码失败:', err);
     res.json({ code: -1, msg: '生成绑定码失败' });

@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const db = require('../config/database');
 
 // 生成随机字符串
 function generateRandomString(length = 32) {
@@ -151,6 +152,20 @@ function base64ToPem(base64, type = 'PUBLIC KEY') {
   return `-----BEGIN ${type}-----\n${formatted}\n-----END ${type}-----`;
 }
 
+/**
+ * 生成12位不重复的PID（API使用）
+ */
+async function generateUniquePid() {
+  let pid;
+  let exists = true;
+  while (exists) {
+    pid = Math.floor(100000000000 + Math.random() * 900000000000).toString();
+    const [rows] = await db.query('SELECT id FROM merchants WHERE pid = ?', [pid]);
+    exists = rows.length > 0;
+  }
+  return pid;
+}
+
 module.exports = {
   generateRandomString,
   generateRandomDigits,
@@ -164,5 +179,6 @@ module.exports = {
   getClientIp,
   generateRsaKeyPair,
   pemToBase64,
-  base64ToPem
+  base64ToPem,
+  generateUniquePid
 };

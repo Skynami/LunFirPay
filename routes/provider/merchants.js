@@ -7,7 +7,8 @@ const db = require('../../config/database');
 const {
   generateRandomMixedCaseAlnum,
   generateRandomUsername,
-  generateRsaKeyPair
+  generateRsaKeyPair,
+  generateUniquePid
 } = require('../../utils/helpers');
 const { requireProviderRamPermission } = require('../auth');
 
@@ -24,18 +25,6 @@ const payTypes = [
 
 function getAllPayTypes() {
   return payTypes.filter(pt => pt.status === 1);
-}
-
-// 生成12位不重复的PID（API使用）
-async function generateUniquePid() {
-  let pid;
-  let exists = true;
-  while (exists) {
-    pid = Math.floor(100000000000 + Math.random() * 900000000000).toString();
-    const [rows] = await db.query('SELECT id FROM merchants WHERE pid = ?', [pid]);
-    exists = rows.length > 0;
-  }
-  return pid;
 }
 
 async function generateUniqueUsername() {
@@ -58,7 +47,7 @@ router.get('/merchants', requireProviderRamPermission('merchant'), async (req, r
                u.username
                FROM merchants m
                JOIN users u ON m.user_id = u.id
-           WHERE m.status IN ('pending', 'active', 'disabled', 'banned')
+           WHERE m.status IN ('pending', 'active', 'paused', 'disabled', 'banned')
              AND u.is_admin = 0`;
     const params = [];
     if (status) {
@@ -213,13 +202,23 @@ router.post('/merchants/create-user', requireProviderRamPermission('merchant'), 
     );
     const userId = insertResult.insertId;
 
-    // 创建商户记录（user_id 引用 users.id），管理员创建的商户直接激活
+    // 创建商户记录（user_id 引用 users.id），管理员创建的商户直接激活并生成 pid/key
+    const pid = await generateUniquePid();
+    const apiKey = generateRandomMixedCaseAlnum(32);
+    const rsaKeyPair = generateRsaKeyPair();
+    
+    // 获取默认支付组ID
+    const [defaultPayGroups] = await db.query(
+      'SELECT id FROM provider_pay_groups WHERE is_default = 1 LIMIT 1'
+    );
+    const defaultPayGroupId = defaultPayGroups.length > 0 ? defaultPayGroups[0].id : null;
+    
     await db.query(
-      'INSERT INTO merchants (user_id, api_key, status) VALUES (?, NULL, ?)',
-      [userId, 'active']
+      'INSERT INTO merchants (user_id, pid, api_key, rsa_public_key, rsa_private_key, status, approved_at, pay_group_id) VALUES (?, ?, ?, ?, ?, ?, NOW(), ?)',
+      [userId, pid, apiKey, rsaKeyPair.publicKey, rsaKeyPair.privateKey, 'active', defaultPayGroupId]
     );
 
-    res.json({ code: 0, msg: '创建成功', data: { userId, username, password, email } });
+    res.json({ code: 0, msg: '创建成功', data: { userId, username, password, email, pid, apiKey } });
   } catch (error) {
     console.error('创建商户账号错误:', error);
     res.json({ code: -1, msg: '创建失败: ' + error.message });
@@ -439,10 +438,11 @@ router.post('/merchants/update', requireProviderRamPermission('merchant'), async
     }
 
     // 单服务商模式，不按 provider_id 过滤
+    // merchant_id 可能是 users.id (user_id) 或 merchants.id
     params.push(merchant_id);
 
     await db.query(
-      `UPDATE merchants SET ${updates.join(', ')} WHERE id = ?`,
+      `UPDATE merchants SET ${updates.join(', ')} WHERE user_id = ?`,
       params
     );
 

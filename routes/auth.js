@@ -210,10 +210,24 @@ router.post('/register', async (req, res) => {
       const merchantStatus = autoApprove === '1' ? 'active' : 'pending';
       
       // 创建商户配置（user_id 引用 users.id）
-      await db.query(
-        'INSERT INTO merchants (user_id, api_key, status, pay_group_id) VALUES (?, ?, ?, ?)',
-        [userId, apiKey, merchantStatus, defaultPayGroupId]
-      );
+      if (autoApprove === '1') {
+        // 自动开通时生成 pid 和 api_key
+        const { generateUniquePid, generateRandomMixedCaseAlnum, generateRsaKeyPair } = require('../utils/helpers');
+        const pid = await generateUniquePid();
+        const generatedApiKey = generateRandomMixedCaseAlnum(32);
+        const rsaKeyPair = generateRsaKeyPair();
+        
+        await db.query(
+          'INSERT INTO merchants (user_id, pid, api_key, rsa_public_key, rsa_private_key, status, approved_at, pay_group_id) VALUES (?, ?, ?, ?, ?, ?, NOW(), ?)',
+          [userId, pid, generatedApiKey, rsaKeyPair.publicKey, rsaKeyPair.privateKey, merchantStatus, defaultPayGroupId]
+        );
+      } else {
+        // 未自动开通，等待管理员审核
+        await db.query(
+          'INSERT INTO merchants (user_id, api_key, status, pay_group_id) VALUES (?, ?, ?, ?)',
+          [userId, apiKey, merchantStatus, defaultPayGroupId]
+        );
+      }
     }
 
     // 创建会话

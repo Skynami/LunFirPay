@@ -95,7 +95,7 @@ CREATE TABLE IF NOT EXISTS `merchants` (
   `pay_group_id` int unsigned DEFAULT NULL,
   `balance` decimal(12,2) DEFAULT '0.00',
   `approved_at` datetime DEFAULT NULL,
-  `status` enum('pending','active','disabled','banned') DEFAULT 'pending',
+  `status` enum('pending','active','paused','disabled','banned') DEFAULT 'pending',
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   PRIMARY KEY (`id`),
@@ -426,7 +426,34 @@ DEALLOCATE PREPARE stmt;
 INSERT IGNORE INTO `settlement_options` (`id`, `alipay_enabled`, `wxpay_enabled`, `bank_enabled`, `crypto_enabled`)
 VALUES (1, 1, 1, 1, 0);
 
--- ==================== 可选清理（取消注释执行） ====================
+-- ==================== 数据库升级（添加缺失的列） ====================
 
--- 删除废弃的 ram_permissions 表（权限已改为存储在 user_ram.permissions JSON 字段）
--- DROP TABLE IF EXISTS `ram_permissions`;
+-- 为 provider_channels 表添加 time_start 和 time_stop 列（如果不存在）
+SET @dbname = DATABASE();
+SET @tablename = 'provider_channels';
+
+-- 添加 time_start 列
+SET @columnname = 'time_start';
+SET @preparedStatement = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = @tablename AND COLUMN_NAME = @columnname) > 0,
+  'SELECT 1',
+  CONCAT('ALTER TABLE `', @tablename, '` ADD COLUMN `time_start` tinyint DEFAULT NULL COMMENT ''开放开始时间（0-23小时）'' AFTER `day_limit`')
+));
+PREPARE stmt FROM @preparedStatement;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- 添加 time_stop 列
+SET @columnname = 'time_stop';
+SET @preparedStatement = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = @tablename AND COLUMN_NAME = @columnname) > 0,
+  'SELECT 1',
+  CONCAT('ALTER TABLE `', @tablename, '` ADD COLUMN `time_stop` tinyint DEFAULT NULL COMMENT ''开放结束时间（0-23小时）'' AFTER `time_start`')
+));
+PREPARE stmt FROM @preparedStatement;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- 修改 merchants.status 枚举添加 paused（直接执行，MySQL 会自动保留现有值）
+ALTER TABLE `merchants` MODIFY COLUMN `status` enum('pending','active','paused','disabled','banned') DEFAULT 'pending';
+

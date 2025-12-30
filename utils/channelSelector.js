@@ -70,6 +70,38 @@ async function checkChannelDayLimit(channel, money) {
 }
 
 /**
+ * 检查通道是否在开放时间段内
+ * @param {object} channel - 通道对象
+ * @returns {boolean} - 是否在开放时间段
+ */
+function checkChannelTimeRange(channel) {
+    const timeStart = channel.time_start;
+    const timeStop = channel.time_stop;
+    
+    // 如果没有设置时间限制，则始终可用
+    if (timeStart === null && timeStop === null) return true;
+    if (timeStart === undefined && timeStop === undefined) return true;
+    
+    // 获取当前小时（北京时间 UTC+8）
+    const now = new Date();
+    const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+    const beijingTime = new Date(utc + (8 * 3600000));
+    const currentHour = beijingTime.getHours();
+    
+    const start = timeStart !== null ? parseInt(timeStart) : 0;
+    const stop = timeStop !== null ? parseInt(timeStop) : 23;
+    
+    // 检查时间范围
+    if (start <= stop) {
+        // 正常范围：如 9-18
+        return currentHour >= start && currentHour <= stop;
+    } else {
+        // 跨夜范围：如 22-6（表示22点到次日6点）
+        return currentHour >= start || currentHour <= stop;
+    }
+}
+
+/**
  * 从通道列表中过滤出满足单日限额的通道
  * @param {array} channels - 通道列表
  * @param {number} money - 订单金额
@@ -78,6 +110,27 @@ async function checkChannelDayLimit(channel, money) {
 async function filterByDayLimit(channels, money) {
     const result = [];
     for (const channel of channels) {
+        if (await checkChannelDayLimit(channel, money)) {
+            result.push(channel);
+        }
+    }
+    return result;
+}
+
+/**
+ * 从通道列表中过滤出在开放时间段内且满足限额的通道
+ * @param {array} channels - 通道列表
+ * @param {number} money - 订单金额
+ * @returns {array} - 过滤后的通道列表
+ */
+async function filterAvailableChannels(channels, money) {
+    const result = [];
+    for (const channel of channels) {
+        // 检查时间限制
+        if (!checkChannelTimeRange(channel)) {
+            continue;
+        }
+        // 检查单日限额
         if (await checkChannelDayLimit(channel, money)) {
             result.push(channel);
         }
@@ -293,9 +346,16 @@ async function getChannelById(channelId, money) {
     
     if (channels.length === 0) return null;
     
+    const channel = channels[0];
+    
+    // 检查时间限制
+    if (!checkChannelTimeRange(channel)) {
+        return null;
+    }
+    
     // 检查单日限额
-    if (await checkChannelDayLimit(channels[0], money)) {
-        return channels[0];
+    if (await checkChannelDayLimit(channel, money)) {
+        return channel;
     }
     return null;
 }
@@ -313,8 +373,8 @@ async function getChannelRandom(payTypeName, money) {
         [payTypeName, money, money]
     );
     
-    // 过滤单日限额
-    const available = await filterByDayLimit(channels, money);
+    // 过滤时间限制和单日限额
+    const available = await filterAvailableChannels(channels, money);
     if (available.length === 0) return null;
     
     // 随机选择一个
@@ -336,8 +396,8 @@ async function getChannelSequential(payTypeName, money, groupId) {
         [payTypeName, money, money]
     );
     
-    // 过滤单日限额
-    const available = await filterByDayLimit(channels, money);
+    // 过滤时间限制和单日限额
+    const available = await filterAvailableChannels(channels, money);
     if (available.length === 0) return null;
     
     // 获取当前索引
@@ -389,11 +449,10 @@ async function getChannelFirst(payTypeName, money) {
         [payTypeName, money, money]
     );
     
-    // 过滤单日限额，返回第一个可用的
-    for (const channel of channels) {
-        if (await checkChannelDayLimit(channel, money)) {
-            return channel;
-        }
+    // 过滤时间限制和单日限额，返回第一个可用的
+    const available = await filterAvailableChannels(channels, money);
+    if (available.length > 0) {
+        return available[0];
     }
     return null;
 }
@@ -426,8 +485,8 @@ async function getChannelFromGroup(groupId, money) {
     
     if (channels.length === 0) return null;
     
-    // 过滤单日限额
-    const availableChannels = await filterByDayLimit(channels, money);
+    // 过滤时间限制和单日限额
+    const availableChannels = await filterAvailableChannels(channels, money);
     if (availableChannels.length === 0) return null;
     
     // 创建ID到通道的映射

@@ -14,7 +14,7 @@ router.get('/channels', requireProviderRamPermission('channel'), async (req, res
 
     // 排除 config 敏感配置字段
     let sql = `SELECT id, channel_id, channel_name, plugin_name, pay_type, 
-               cost_rate, min_money, max_money, day_limit, priority, status, apptype, notify_url, created_at
+               cost_rate, min_money, max_money, day_limit, time_start, time_stop, priority, status, apptype, notify_url, created_at
                FROM provider_channels WHERE (is_deleted = 0 OR is_deleted IS NULL)`;
     const params = [];
 
@@ -76,10 +76,20 @@ router.get('/plugins', requireProviderRamPermission('channel'), async (req, res)
 // 创建支付通道（需要 channel 权限）
 router.post('/channels/create', requireProviderRamPermission('channel'), async (req, res) => {
   try {
-    const { name, plugin, pay_type, cost_rate, min_money, max_money, day_limit, priority, status, config, notify_url } = req.body;
+    const { name, plugin, pay_type, cost_rate, min_money, max_money, day_limit, time_start, time_stop, priority, status, config, notify_url } = req.body;
 
     if (!name || !plugin) {
       return res.json({ code: -1, msg: '请填写完整信息' });
+    }
+
+    // 验证时间范围
+    const timeStartVal = (time_start !== undefined && time_start !== null && time_start !== '') ? parseInt(time_start) : null;
+    const timeStopVal = (time_stop !== undefined && time_stop !== null && time_stop !== '') ? parseInt(time_stop) : null;
+    if (timeStartVal !== null && (timeStartVal < 0 || timeStartVal > 23)) {
+      return res.json({ code: -1, msg: '开始时间必须在0-23之间' });
+    }
+    if (timeStopVal !== null && (timeStopVal < 0 || timeStopVal > 23)) {
+      return res.json({ code: -1, msg: '结束时间必须在0-23之间' });
     }
 
     // 解析 config，提取 apptype
@@ -104,9 +114,9 @@ router.post('/channels/create', requireProviderRamPermission('channel'), async (
 
     await db.query(
       `INSERT INTO provider_channels 
-       (channel_id, channel_name, plugin_name, pay_type, cost_rate, min_money, max_money, priority, status, config, apptype, notify_url) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [nextChannelId, name, plugin, pay_type || 'alipay', cost_rate || 0, min_money || 0, max_money || 0, priority || 0, status ?? 1, config || null, apptypeStr, notify_url || null]
+       (channel_id, channel_name, plugin_name, pay_type, cost_rate, min_money, max_money, day_limit, time_start, time_stop, priority, status, config, apptype, notify_url) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [nextChannelId, name, plugin, pay_type || 'alipay', cost_rate || 0, min_money || 0, max_money || 0, day_limit || 0, timeStartVal, timeStopVal, priority || 0, status ?? 1, config || null, apptypeStr, notify_url || null]
     );
 
     res.json({ code: 0, msg: '创建成功' });
@@ -119,7 +129,7 @@ router.post('/channels/create', requireProviderRamPermission('channel'), async (
 // 更新支付通道（需要 channel 权限）
 router.post('/channels/update', requireProviderRamPermission('channel'), async (req, res) => {
   try {
-    const { id, name, pay_type, cost_rate, min_money, max_money, priority, status, config, notify_url } = req.body;
+    const { id, name, pay_type, cost_rate, min_money, max_money, day_limit, time_start, time_stop, priority, status, config, notify_url } = req.body;
 
     const updates = [];
     const params = [];
@@ -143,6 +153,26 @@ router.post('/channels/update', requireProviderRamPermission('channel'), async (
     if (max_money !== undefined) {
       updates.push('max_money = ?');
       params.push(max_money);
+    }
+    if (day_limit !== undefined) {
+      updates.push('day_limit = ?');
+      params.push(day_limit);
+    }
+    if (time_start !== undefined) {
+      const val = (time_start !== null && time_start !== '') ? parseInt(time_start) : null;
+      if (val !== null && (val < 0 || val > 23)) {
+        return res.json({ code: -1, msg: '开始时间必须在0-23之间' });
+      }
+      updates.push('time_start = ?');
+      params.push(val);
+    }
+    if (time_stop !== undefined) {
+      const val = (time_stop !== null && time_stop !== '') ? parseInt(time_stop) : null;
+      if (val !== null && (val < 0 || val > 23)) {
+        return res.json({ code: -1, msg: '结束时间必须在0-23之间' });
+      }
+      updates.push('time_stop = ?');
+      params.push(val);
     }
     if (priority !== undefined) {
       updates.push('priority = ?');

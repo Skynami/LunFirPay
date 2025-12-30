@@ -13,7 +13,7 @@ const certValidator = require('../../utils/certValidator');
 const info = {
     name: 'alipaysl',
     showname: '支付宝官方支付服务商版',
-    author: '支付宝',
+    author: '支付系统',
     link: 'https://b.alipay.com/signing/productSetV2.htm',
     types: ['alipay'],
     inputs: {
@@ -36,6 +36,11 @@ const info = {
             name: '商户授权token',
             type: 'input',
             note: ''
+        },
+        force_min_age: {
+            name: '强制最小年龄',
+            type: 'input',
+            note: '留空不限制。设置后将忽略API传入的min_age参数，强制使用此年龄限制'
         }
     },
     select: {
@@ -53,7 +58,7 @@ const info = {
         { key: 'alipayCert', name: '支付宝公钥证书', ext: '.crt', desc: 'alipayCertPublicKey_RSA2.crt', optional: true },
         { key: 'alipayRootCert', name: '支付宝根证书', ext: '.crt', desc: 'alipayRootCert.crt', optional: true }
     ],
-    note: '<p>在支付宝服务商后台进件后可获取到子商户的授权链接，子商户访问之后即可得到商户授权token。</p><p>【可选】如果使用公钥证书模式，请上传3个证书文件，并将下方"支付宝公钥"留空</p>',
+    note: '<p>在支付宝服务商后台进件后可获取到子商户的授权链接，子商户访问之后即可得到商户授权token</p><p>【可选】如果使用公钥证书模式，请上传3个证书文件，并将下方"支付宝公钥"留空</p>',
     bindwxmp: false,
     bindwxa: false
 };
@@ -74,7 +79,7 @@ function getCertAbsolutePath(channel, certKey) {
 }
 
 /**
- * 从证书中提取序列号 (appCertSN)
+ * 从证书中提取序列号(appCertSN)
  */
 function getCertSN(certPath) {
     try {
@@ -259,6 +264,56 @@ function buildPayForm(params) {
 }
 
 /**
+ * 处理买家身份限制信息 (ext_user_info)
+ * 仅支付宝官方接口支持此功能
+ * @param {Object} bizContent - 业务内容对象
+ * @param {Object} orderInfo - 订单信息
+ * @param {Object} channelConfig - 通道配置（包含 force_min_age 等）
+ */
+function handleExtUserInfo(bizContent, orderInfo, channelConfig = {}) {
+    const { cert_no, cert_name, min_age } = orderInfo;
+    
+    // 计算最终生效的最小年龄：取 max(商户传入的 min_age, 通道的 force_min_age)
+    // 商户传入的 min_age 已经通过通道筛选保证 >= force_min_age，但最终使用较大值
+    const forceMinAge = channelConfig.force_min_age;
+    const merchantMinAge = min_age ? parseInt(min_age) : null;
+    const channelMinAge = (forceMinAge !== undefined && forceMinAge !== null && forceMinAge !== '') 
+        ? parseInt(forceMinAge) 
+        : null;
+    
+    // 取两者的较大值
+    let effectiveMinAge = null;
+    if (merchantMinAge !== null && channelMinAge !== null) {
+        effectiveMinAge = Math.max(merchantMinAge, channelMinAge);
+    } else if (merchantMinAge !== null) {
+        effectiveMinAge = merchantMinAge;
+    } else if (channelMinAge !== null) {
+        effectiveMinAge = channelMinAge;
+    }
+    
+    if (!cert_no && !cert_name && !effectiveMinAge) {
+        return;
+    }
+    
+    const extUserInfo = { need_check_info: 'T' };
+    
+    if (cert_no) {
+        extUserInfo.cert_type = 'IDENTITY_CARD';
+        extUserInfo.cert_no = cert_no;
+    }
+    
+    if (cert_name) {
+        extUserInfo.name = cert_name;
+    }
+    
+    if (effectiveMinAge) {
+        extUserInfo.min_age = String(effectiveMinAge);
+    }
+    
+    bizContent.ext_user_info = extUserInfo;
+}
+
+/**
  * 发起支付
  */
 async function submit(channelConfig, orderInfo, conf) {
@@ -287,6 +342,9 @@ async function submit(channelConfig, orderInfo, conf) {
     if (clientip) {
         bizContent.business_params = { mc_create_trade_ip: clientip };
     }
+    
+    // 添加买家身份限制信息
+    handleExtUserInfo(bizContent, orderInfo, channelConfig);
     
     if (is_mobile && apptype.includes('2')) {
         const params = buildRequestParams(config, 'alipay.trade.wap.pay', bizContent, channelConfig);
@@ -364,6 +422,9 @@ async function qrcode(channelConfig, orderInfo, conf) {
         bizContent.business_params = { mc_create_trade_ip: clientip };
     }
     
+    // 添加买家身份限制信息
+    handleExtUserInfo(bizContent, orderInfo, channelConfig);
+    
     const params = buildRequestParams(config, 'alipay.trade.precreate', bizContent, channelConfig);
     const response = await sendRequest(params);
     
@@ -401,6 +462,9 @@ async function apppay(channelConfig, orderInfo, conf) {
     if (clientip) {
         bizContent.business_params = { mc_create_trade_ip: clientip };
     }
+    
+    // 添加买家身份限制信息
+    handleExtUserInfo(bizContent, orderInfo, channelConfig);
     
     const params = buildRequestParams(config, 'alipay.trade.app.pay', bizContent, channelConfig);
     
@@ -451,6 +515,9 @@ async function jspay(channelConfig, orderInfo, conf) {
     if (clientip) {
         bizContent.business_params = { mc_create_trade_ip: clientip };
     }
+    
+    // 添加买家身份限制信息
+    handleExtUserInfo(bizContent, orderInfo, channelConfig);
     
     const params = buildRequestParams(config, 'alipay.trade.create', bizContent, channelConfig);
     const response = await sendRequest(params);
@@ -508,6 +575,9 @@ async function jsapipay(channelConfig, orderInfo, conf) {
         bizContent.business_params = { mc_create_trade_ip: clientip };
     }
     
+    // 添加买家身份限制信息
+    handleExtUserInfo(bizContent, orderInfo, channelConfig);
+    
     const params = buildRequestParams(config, 'alipay.trade.create', bizContent, channelConfig);
     const response = await sendRequest(params);
     
@@ -541,6 +611,9 @@ async function scanpay(channelConfig, orderInfo, conf) {
     if (clientip) {
         bizContent.business_params = { mc_create_trade_ip: clientip };
     }
+    
+    // 添加买家身份限制信息
+    handleExtUserInfo(bizContent, orderInfo, channelConfig);
     
     const params = buildRequestParams(config, 'alipay.trade.pay', bizContent, channelConfig);
     const response = await sendRequest(params);

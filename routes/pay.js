@@ -15,6 +15,64 @@ const config = yaml.load(fs.readFileSync(configPath, 'utf8'));
 // 引入系统配置服务（从数据库获取 baseUrl, siteName 等）
 const systemConfig = require('../utils/systemConfig');
 
+// ==================== 身份证验证函数 ====================
+
+/**
+ * 验证身份证号码格式（18位）
+ * @param {string} idCard - 身份证号码
+ * @returns {boolean} 是否有效
+ */
+function isValidIdCard(idCard) {
+  if (!idCard || typeof idCard !== 'string') return false;
+  
+  // 18位身份证正则
+  const reg = /^[1-9]\d{5}(19|20)\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])\d{3}[\dXx]$/;
+  if (!reg.test(idCard)) return false;
+  
+  // 校验码验证
+  const weights = [7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2];
+  const checkCodes = ['1', '0', 'X', '9', '8', '7', '6', '5', '4', '3', '2'];
+  let sum = 0;
+  for (let i = 0; i < 17; i++) {
+    sum += parseInt(idCard[i]) * weights[i];
+  }
+  const checkCode = checkCodes[sum % 11];
+  return idCard[17].toUpperCase() === checkCode;
+}
+
+/**
+ * 构建买家身份限制信息
+ * @param {Object} params - 请求参数
+ * @returns {Object|null} cert_info 对象或 null
+ */
+function buildCertInfo(params) {
+  const { cert_no, cert_name, min_age } = params;
+  
+  // 验证身份证号码格式
+  if (cert_no && !isValidIdCard(cert_no)) {
+    return { error: '身份证号码格式不正确' };
+  }
+  
+  // 验证最小年龄格式
+  if (min_age !== undefined && min_age !== null && min_age !== '') {
+    const age = parseInt(min_age);
+    if (isNaN(age) || age < 0) {
+      return { error: '最低年龄格式不正确' };
+    }
+  }
+  
+  // 如果没有任何身份限制参数，返回 null
+  if (!cert_no && !cert_name && (min_age === undefined || min_age === null || min_age === '')) {
+    return null;
+  }
+  
+  return {
+    cert_no: cert_no || null,
+    cert_name: cert_name || null,
+    min_age: min_age ? parseInt(min_age) : null
+  };
+}
+
 // ==================== 支付类型配置 ====================
 const payTypes = [
   { id: 1, name: 'alipay', showname: '支付宝', icon: 'alipay.ico', device: 0, status: 1, sort: 1 },
@@ -396,7 +454,7 @@ async function getPayTypesByGroups() {
 
 // 创建订单（或复用已存在的未支付订单）
 async function createOrder(data) {
-  const { merchantId, channelId, tradeNo, outTradeNo, type, name, money, clientIp, device, notifyUrl, returnUrl, feeRate, feePayer, orderType, cryptoPid } = data;
+  const { merchantId, channelId, tradeNo, outTradeNo, type, name, money, clientIp, device, notifyUrl, returnUrl, feeRate, feePayer, orderType, cryptoPid, certInfo } = data;
   
   // 检查是否已存在相同商户订单号的未支付订单（status=0）
   const [existingOrders] = await db.query(
@@ -409,23 +467,26 @@ async function createOrder(data) {
   const feeMoney = feeRate ? parseFloat((moneyFloat * feeRate).toFixed(2)) : 0;
   const realMoney = feePayer === 'buyer' ? parseFloat((moneyFloat + feeMoney).toFixed(2)) : moneyFloat;
   
+  // 处理 certInfo，转换为 JSON 字符串
+  const certInfoJson = certInfo ? JSON.stringify(certInfo) : null;
+  
   if (existingOrders.length > 0) {
     const existingOrder = existingOrders[0];
-    // 复用已存在的订单，更新支付通道和费率信息
+    // 复用已存在的订单，更新支付通道和费率信息，以及身份限制信息
     await db.query(
-      'UPDATE orders SET channel_id = ?, pay_type = ?, notify_url = ?, return_url = ?, fee_money = ?, real_money = ?, fee_payer = ? WHERE id = ?',
-      [channelId, type, notifyUrl, returnUrl, feeMoney, realMoney, feePayer || 'merchant', existingOrder.id]
+      'UPDATE orders SET channel_id = ?, pay_type = ?, notify_url = ?, return_url = ?, fee_money = ?, real_money = ?, fee_payer = ?, cert_info = ? WHERE id = ?',
+      [channelId, type, notifyUrl, returnUrl, feeMoney, realMoney, feePayer || 'merchant', certInfoJson, existingOrder.id]
     );
-    console.log('复用已存在订单', { tradeNo: existingOrder.trade_no, outTradeNo, feeMoney, realMoney, feePayer });
+    console.log('复用已存在订单', { tradeNo: existingOrder.trade_no, outTradeNo, feeMoney, realMoney, feePayer, certInfo });
     return { orderId: existingOrder.id, tradeNo: existingOrder.trade_no, isExisting: true };
   }
   
-  console.log('创建订单:', { tradeNo, money: moneyFloat, feeRate, feeMoney, realMoney, feePayer, orderType });
+  console.log('创建订单:', { tradeNo, money: moneyFloat, feeRate, feeMoney, realMoney, feePayer, orderType, certInfo });
   
   const [result] = await db.query(
-    `INSERT INTO orders (merchant_id, channel_id, trade_no, out_trade_no, pay_type, name, money, real_money, fee_money, fee_payer, client_ip, notify_url, return_url, status, order_type, crypto_pid, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, NOW())`,
-    [merchantId, channelId, tradeNo, outTradeNo, type, name, moneyFloat, realMoney, feeMoney, feePayer || 'merchant', clientIp, notifyUrl, returnUrl, orderType || 'normal', cryptoPid || null]
+    `INSERT INTO orders (merchant_id, channel_id, trade_no, out_trade_no, pay_type, name, money, real_money, fee_money, fee_payer, client_ip, notify_url, return_url, status, order_type, crypto_pid, cert_info, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, NOW())`,
+    [merchantId, channelId, tradeNo, outTradeNo, type, name, moneyFloat, realMoney, feeMoney, feePayer || 'merchant', clientIp, notifyUrl, returnUrl, orderType || 'normal', cryptoPid || null, certInfoJson]
   );
   return { orderId: result.insertId, tradeNo, isExisting: false };
 }
@@ -503,11 +564,17 @@ function buildPayResponse(version, order, channel, payUrl, payType) {
 router.all('/submit', async (req, res) => {
   try {
     const params = { ...req.query, ...req.body };
-    const { pid, type, out_trade_no, notify_url, return_url, name, money, sign, sign_type, sitename, param } = params;
+    const { pid, type, out_trade_no, notify_url, return_url, name, money, sign, sign_type, sitename, param, cert_no, cert_name, min_age } = params;
 
     // 参数验证
     if (!pid || !type || !out_trade_no || !notify_url || !name || !money || !sign) {
       return res.status(400).send('缺少必要参数');
+    }
+
+    // 验证买家身份限制参数
+    const certInfo = buildCertInfo({ cert_no, cert_name, min_age });
+    if (certInfo && certInfo.error) {
+      return res.status(400).send(certInfo.error);
     }
 
     // 获取商户信息
@@ -566,7 +633,8 @@ router.all('/submit', async (req, res) => {
       notifyUrl: notify_url,
       returnUrl: return_url || '',
       feeRate,
-      feePayer
+      feePayer,
+      certInfo  // 买家身份限制信息
     });
     const tradeNo = orderResult.tradeNo;
 
@@ -585,11 +653,17 @@ router.all('/submit', async (req, res) => {
 router.all('/mapi', async (req, res) => {
   try {
     const params = { ...req.query, ...req.body };
-    const { pid, type, out_trade_no, notify_url, return_url, name, money, sign, sign_type, sitename, param } = params;
+    const { pid, type, out_trade_no, notify_url, return_url, name, money, sign, sign_type, sitename, param, cert_no, cert_name, min_age } = params;
 
     // 参数验证
     if (!pid || !type || !out_trade_no || !notify_url || !name || !money || !sign) {
       return res.json({ code: -1, msg: '缺少必要参数' });
+    }
+
+    // 验证买家身份限制参数
+    const certInfo = buildCertInfo({ cert_no, cert_name, min_age });
+    if (certInfo && certInfo.error) {
+      return res.json({ code: -1, msg: certInfo.error });
     }
 
     // 获取商户信息
@@ -648,7 +722,8 @@ router.all('/mapi', async (req, res) => {
       notifyUrl: notify_url,
       returnUrl: return_url || '',
       feeRate,
-      feePayer
+      feePayer,
+      certInfo  // 买家身份限制信息
     });
     const tradeNo = orderResult.tradeNo;
 
@@ -748,7 +823,8 @@ router.all('/create', async (req, res) => {
     const { 
       pid, type, out_trade_no, notify_url, return_url, name, money, 
       sign, timestamp, method, device, clientip,
-      auth_code, sub_openid, sub_appid, channel_id, param
+      auth_code, sub_openid, sub_appid, channel_id, param,
+      cert_no, cert_name, min_age
     } = params;
 
     // 参数验证
@@ -759,6 +835,12 @@ router.all('/create', async (req, res) => {
     // 验证时间戳
     if (!validateTimestamp(timestamp)) {
       return res.json({ code: 1002, msg: '时间戳已过期' });
+    }
+
+    // 验证买家身份限制参数
+    const certInfo = buildCertInfo({ cert_no, cert_name, min_age });
+    if (certInfo && certInfo.error) {
+      return res.json({ code: 1008, msg: certInfo.error });
     }
 
     // 获取商户信息
@@ -849,7 +931,8 @@ router.all('/create', async (req, res) => {
       notifyUrl: notify_url,
       returnUrl: return_url || '',
       feeRate,
-      feePayer
+      feePayer,
+      certInfo  // 买家身份限制信息
     });
     const { orderId, tradeNo } = orderResult;
 
@@ -1173,7 +1256,15 @@ router.post('/select_channel', async (req, res) => {
 });
 
 // 根据支付组配置选择通道（单服务商模式）
-async function selectChannelFromGroup(payType, payGroupId = null) {
+/**
+ * 从支付组中选择通道
+ * @param {string} payType - 支付类型
+ * @param {number|null} payGroupId - 支付组ID
+ * @param {Object} options - 可选参数
+ * @param {number|null} options.minAge - 商户要求的最小年龄，用于过滤通道
+ */
+async function selectChannelFromGroup(payType, payGroupId = null, options = {}) {
+  const { minAge = null } = options;
   let payGroup;
   
   // 如果传入的 payGroupId，优先使用 
@@ -1242,44 +1333,78 @@ async function selectChannelFromGroup(payType, payGroupId = null) {
         groupChannels = [];
       }
       if (groupChannels.length > 0) {
-        // 根据轮询模式选择通道
-        // mode: 0=顺序, 1=加权随机, 2=首个可用
-        let selectedChannelId;
-        if (group.mode === 2) {
-          // 首个可用
-          selectedChannelId = groupChannels[0].id;
-        } else if (group.mode === 1) {
-          // 加权随机
-          const totalWeight = groupChannels.reduce((sum, c) => sum + (c.weight || 1), 0);
-          let random = Math.random() * totalWeight;
-          for (const ch of groupChannels) {
-            random -= (ch.weight || 1);
-            if (random <= 0) {
-              selectedChannelId = ch.id;
-              break;
-            }
-          }
-          if (!selectedChannelId) selectedChannelId = groupChannels[0].id;
-        } else {
-          // 顺序轮询或默认随机
-          const randomCh = groupChannels[Math.floor(Math.random() * groupChannels.length)];
-          selectedChannelId = randomCh.id;
-        }
-        
-        // 从所有服务商通道中查找选中的通道（不限支付方式）
-        const [allChannels] = await db.query(
+        // 获取轮询组中所有通道的详细信息（用于 minAge 过滤）
+        const channelIds = groupChannels.map(c => c.id);
+        const [allGroupChannels] = await db.query(
           `SELECT *, pay_type as type_code, channel_name as type_name
            FROM provider_channels 
-           WHERE id = ? AND status = 1`,
-          [selectedChannelId]
+           WHERE id IN (?) AND status = 1`,
+          [channelIds]
         );
-        if (allChannels.length > 0) {
-          console.log('轮询组选中通道:', selectedChannelId, allChannels[0].channel_name, allChannels[0].plugin_name);
-          return allChannels[0];
+        
+        // 如果商户传入了 minAge，过滤掉 force_min_age > minAge 的通道
+        let eligibleChannels = allGroupChannels;
+        if (minAge !== null && minAge !== undefined) {
+          const merchantMinAge = parseInt(minAge);
+          if (!isNaN(merchantMinAge)) {
+            eligibleChannels = allGroupChannels.filter(channel => {
+              try {
+                const config = typeof channel.config === 'string' ? JSON.parse(channel.config) : (channel.config || {});
+                const forceMinAge = config.params?.force_min_age;
+                if (forceMinAge === null || forceMinAge === undefined || forceMinAge === '') {
+                  return true;
+                }
+                const channelMinAge = parseInt(forceMinAge);
+                return !isNaN(channelMinAge) && channelMinAge <= merchantMinAge;
+              } catch (e) {
+                return true;
+              }
+            });
+            console.log(`轮询组minAge过滤: 商户要求${merchantMinAge}岁, 原${allGroupChannels.length}个通道, 过滤后${eligibleChannels.length}个`);
+          }
+        }
+        
+        if (eligibleChannels.length === 0) {
+          // 轮询组中没有符合条件的通道，继续走下面的逻辑
+        } else {
+          // 重建 groupChannels，只保留符合条件的通道
+          const eligibleIds = new Set(eligibleChannels.map(c => c.id));
+          const filteredGroupChannels = groupChannels.filter(c => eligibleIds.has(c.id));
+          
+          // 根据轮询模式选择通道
+          // mode: 0=顺序, 1=加权随机, 2=首个可用
+          let selectedChannel;
+          if (group.mode === 2) {
+            // 首个可用
+            selectedChannel = eligibleChannels.find(c => c.id === filteredGroupChannels[0]?.id) || eligibleChannels[0];
+          } else if (group.mode === 1) {
+            // 加权随机
+            const totalWeight = filteredGroupChannels.reduce((sum, c) => sum + (c.weight || 1), 0);
+            let random = Math.random() * totalWeight;
+            let selectedId;
+            for (const ch of filteredGroupChannels) {
+              random -= (ch.weight || 1);
+              if (random <= 0) {
+                selectedId = ch.id;
+                break;
+              }
+            }
+            if (!selectedId) selectedId = filteredGroupChannels[0].id;
+            selectedChannel = eligibleChannels.find(c => c.id === selectedId);
+          } else {
+            // 顺序轮询或默认随机
+            const randomCh = filteredGroupChannels[Math.floor(Math.random() * filteredGroupChannels.length)];
+            selectedChannel = eligibleChannels.find(c => c.id === randomCh.id);
+          }
+          
+          if (selectedChannel) {
+            console.log('轮询组选中通道:', selectedChannel.id, selectedChannel.channel_name, selectedChannel.plugin_name);
+            return selectedChannel;
+          }
         }
       }
     }
-    // 轮询组无效，继续走下面的逻辑
+    // 轮询组无效或没有符合条件的通道，继续走下面的逻辑
   }
   
   // 查询该支付类型下的所有可用通道
@@ -1295,26 +1420,55 @@ async function selectChannelFromGroup(payType, payGroupId = null) {
     return null;
   }
   
+  // 如果商户传入了 minAge，过滤掉 force_min_age 限制更严格的通道
+  // 规则：通道的 force_min_age 必须 <= 商户的 minAge（或通道未设置 force_min_age）
+  let filteredChannels = channels;
+  if (minAge !== null && minAge !== undefined) {
+    const merchantMinAge = parseInt(minAge);
+    if (!isNaN(merchantMinAge)) {
+      filteredChannels = channels.filter(channel => {
+        try {
+          const config = typeof channel.config === 'string' ? JSON.parse(channel.config) : (channel.config || {});
+          const forceMinAge = config.params?.force_min_age;
+          // 如果通道没有设置 force_min_age，则可用
+          if (forceMinAge === null || forceMinAge === undefined || forceMinAge === '') {
+            return true;
+          }
+          // 通道的 force_min_age 必须 <= 商户的 minAge
+          const channelMinAge = parseInt(forceMinAge);
+          return !isNaN(channelMinAge) && channelMinAge <= merchantMinAge;
+        } catch (e) {
+          return true; // 配置解析失败则认为通道可用
+        }
+      });
+      console.log(`minAge过滤: 商户要求${merchantMinAge}岁, 原${channels.length}个通道, 过滤后${filteredChannels.length}个`);
+    }
+  }
+  
+  if (filteredChannels.length === 0) {
+    return null;
+  }
+  
   // 如果只有一个通道，直接返回
-  if (channels.length === 1) {
-    return channels[0];
+  if (filteredChannels.length === 1) {
+    return filteredChannels[0];
   }
   
   if (mode > 0) {
     // 指定通道
-    const specified = channels.find(c => c.id === mode);
-    return specified || channels[0];
+    const specified = filteredChannels.find(c => c.id === mode);
+    return specified || filteredChannels[0];
   } else if (mode === -5) {
     // 首个可用
-    return channels[0];
+    return filteredChannels[0];
   } else if (mode === -4) {
     // 顺序轮询 - TODO: 需要实现索引记录
-    const randomIndex = Math.floor(Math.random() * channels.length);
-    return channels[randomIndex];
+    const randomIndex = Math.floor(Math.random() * filteredChannels.length);
+    return filteredChannels[randomIndex];
   } else {
     // 默认随机
-    const randomIndex = Math.floor(Math.random() * channels.length);
-    return channels[randomIndex];
+    const randomIndex = Math.floor(Math.random() * filteredChannels.length);
+    return filteredChannels[randomIndex];
   }
 }
 
@@ -1372,11 +1526,26 @@ router.post('/dopay', async (req, res) => {
         return res.json({ code: 1, msg: '未选择支付方式' });
       }
 
-      // 普通订单处理
-      channelConfig = await selectChannelFromGroup(finalPayType, group_id);
+      // 解析商户传入的 min_age 用于通道筛选
+      let merchantMinAge = null;
+      if (order.cert_info) {
+        try {
+          const certInfo = typeof order.cert_info === 'string' 
+            ? JSON.parse(order.cert_info) 
+            : order.cert_info;
+          if (certInfo.min_age) {
+            merchantMinAge = parseInt(certInfo.min_age);
+          }
+        } catch (e) {
+          console.error('解析 cert_info 失败:', e);
+        }
+      }
+
+      // 普通订单处理，传入 minAge 用于过滤通道
+      channelConfig = await selectChannelFromGroup(finalPayType, group_id, { minAge: merchantMinAge });
 
       if (!channelConfig) {
-        return res.json({ code: 1, msg: '支付通道不可用，请联系服务商' });
+        return res.json({ code: 1, msg: merchantMinAge ? '没有符合年龄限制的支付通道可用' : '支付通道不可用，请联系服务商' });
       }
 
       // 获取商户信息计算费率
@@ -1481,6 +1650,20 @@ router.post('/dopay', async (req, res) => {
       client_ip: order.client_ip || '127.0.0.1',
       userAgent: req.headers['user-agent'] || ''
     };
+    
+    // 解析买家身份限制信息并添加到 orderInfo
+    if (order.cert_info) {
+      try {
+        const certInfo = typeof order.cert_info === 'string' 
+          ? JSON.parse(order.cert_info) 
+          : order.cert_info;
+        if (certInfo.cert_no) orderInfo.cert_no = certInfo.cert_no;
+        if (certInfo.cert_name) orderInfo.cert_name = certInfo.cert_name;
+        if (certInfo.min_age) orderInfo.min_age = certInfo.min_age;
+      } catch (e) {
+        console.error('解析 cert_info 失败:', e);
+      }
+    }
 
     console.log('调用支付插件:', channelConfig.plugin_name, orderInfo);
 
@@ -1949,7 +2132,7 @@ router.post('/generate_keys', async (req, res) => {
 async function handleSubmit(req, res) {
   try {
     const params = { ...req.query, ...req.body };
-    const { pid, type, out_trade_no, notify_url, return_url, name, money, sign, sign_type, timestamp, sitename, param, channel_id } = params;
+    const { pid, type, out_trade_no, notify_url, return_url, name, money, sign, sign_type, timestamp, sitename, param, channel_id, cert_no, cert_name, min_age } = params;
 
     // 判断是否为 V2 模式（带 timestamp）
     const isV2 = !!timestamp;
@@ -1962,6 +2145,12 @@ async function handleSubmit(req, res) {
     // V2 接口验证时间戳
     if (isV2 && !validateTimestamp(timestamp)) {
       return res.status(400).send('时间戳已过期');
+    }
+
+    // 验证买家身份限制参数
+    const certInfo = buildCertInfo({ cert_no, cert_name, min_age });
+    if (certInfo && certInfo.error) {
+      return res.status(400).send(certInfo.error);
     }
 
     // 获取商户信息
@@ -2046,7 +2235,8 @@ async function handleSubmit(req, res) {
       feeRate,
       feePayer,
       orderType: 'normal',
-      cryptoPid: null
+      cryptoPid: null,
+      certInfo  // 买家身份限制信息
     });
     const tradeNo = orderResult.tradeNo;
 
@@ -2065,7 +2255,7 @@ async function handleSubmit(req, res) {
 async function handleMapi(req, res) {
   try {
     const params = { ...req.query, ...req.body };
-    const { pid, type, out_trade_no, notify_url, return_url, name, money, sign, sign_type, timestamp, device, clientip, method, sitename, param, channel_id, sub_openid, sub_appid, auth_code } = params;
+    const { pid, type, out_trade_no, notify_url, return_url, name, money, sign, sign_type, timestamp, device, clientip, method, sitename, param, channel_id, sub_openid, sub_appid, auth_code, cert_no, cert_name, min_age } = params;
 
     // 判断是否为 V2 模式（带 timestamp）
     const isV2 = !!timestamp;
@@ -2078,6 +2268,12 @@ async function handleMapi(req, res) {
     // V2 接口验证时间戳
     if (isV2 && !validateTimestamp(timestamp)) {
       return res.json({ code: -1, msg: '时间戳已过期' });
+    }
+
+    // 验证买家身份限制参数
+    const certInfo = buildCertInfo({ cert_no, cert_name, min_age });
+    if (certInfo && certInfo.error) {
+      return res.json({ code: -1, msg: certInfo.error });
     }
 
     // 获取商户信息
@@ -2167,7 +2363,8 @@ async function handleMapi(req, res) {
       feeRate,
       feePayer,
       orderType: 'normal',
-      cryptoPid: null
+      cryptoPid: null,
+      certInfo  // 买家身份限制信息
     });
     const tradeNo = orderResult.tradeNo;
 

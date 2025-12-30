@@ -1857,7 +1857,12 @@ router.all('/notify/:trade_no', async (req, res) => {
     const { trade_no } = req.params;
     const params = { ...req.query, ...req.body };
 
-    console.log('支付回调通知, trade_no:', trade_no, ', params:', params);
+    console.log('支付回调通知, trade_no:', trade_no);
+    console.log('回调 method:', req.method);
+    console.log('回调 content-type:', req.get('content-type'));
+    console.log('回调 query:', req.query);
+    console.log('回调 body:', req.body);
+    console.log('回调 params合并:', params);
 
     // 查询订单
     const [orders] = await db.query(

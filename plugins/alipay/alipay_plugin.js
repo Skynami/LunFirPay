@@ -527,9 +527,21 @@ async function qrPay(channelConfig, orderInfo) {
  */
 async function notify(channelConfig, notifyData, order) {
   try {
+    // 检查通知数据是否为空
+    if (!notifyData || Object.keys(notifyData).length === 0) {
+      console.log('支付宝回调数据为空');
+      return { success: false };
+    }
+    
     // 验签
     const sign = notifyData.sign;
     const signType = notifyData.sign_type || 'RSA2';
+    
+    // 检查签名是否存在
+    if (!sign) {
+      console.log('支付宝回调缺少sign参数, notifyData:', notifyData);
+      return { success: false };
+    }
     
     // 复制数据避免修改原始对象
     const params = { ...notifyData };
@@ -564,12 +576,14 @@ async function notify(channelConfig, notifyData, order) {
     
     // 验证订单号
     if (notifyData.out_trade_no !== order.trade_no) {
+      console.log('支付宝回调订单号不匹配:', notifyData.out_trade_no, '!=', order.trade_no);
       return { success: false };
     }
     
     // 验证金额 - 使用四舍五入比较，兼容 real_money 和 realmoney
     const orderMoney = order.real_money || order.realmoney;
     if (Math.round(parseFloat(notifyData.total_amount) * 100) !== Math.round(parseFloat(orderMoney) * 100)) {
+      console.log('支付宝回调金额不匹配:', notifyData.total_amount, '!=', orderMoney);
       return { success: false };
     }
     
@@ -581,6 +595,7 @@ async function notify(channelConfig, notifyData, order) {
       };
     }
     
+    console.log('支付宝回调状态不是成功:', notifyData.trade_status);
     return { success: false };
   } catch (error) {
     console.error('支付宝回调处理错误:', error);
